@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:ftconfig/pages/menu.dart';
+import 'package:ftconfig/pages/rs485Setup.dart';
 import 'package:ftconfig/pages/wifiSetup.dart';
 import 'package:http/http.dart' as http;
 
@@ -140,6 +141,7 @@ class _dashboardPageState extends State<dashboardPage> {
               _buildSectionCard(title: "ข้อมูลการเชื่อมต่อ", loading: _loadingInfo, error: _infoError, data: _infoData),
               const SizedBox(height: 16),
               Visibility(visible: _infoData?['mode'] == "AP", child: _buildWifiConnectionButton()),
+              Visibility(visible: _infoData?['mode'] != "AP", child: _buildconfigrs485Button("Config Rs485")),
               Visibility(visible: _infoData?['mode'] != "AP", child: _buildLogoutButton()),
             ],
           ),
@@ -267,6 +269,19 @@ class _dashboardPageState extends State<dashboardPage> {
             MaterialPageRoute(builder: (_) => const MenuPage()),
             (route) => false, // ลบทุก route เดิมทิ้งหมด ไม่เหลือให้ pop กลับ
           );
+        },
+      ),
+    );
+  }
+
+  Widget _buildconfigrs485Button(String text) {
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.logout),
+        title: Text(text),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () {
+          Navigator.push(context, MaterialPageRoute(builder: (_) => Rs485SetupPage(baseUrl: _baseUrl)));
         },
       ),
     );

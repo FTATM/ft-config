@@ -5,27 +5,25 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 // =====================================================
-// Rs485SetupPage — ตั้งค่า RS485 (Modbus RTU) Input เท่านั้น: serial connection + register map
+// TcpSetupPage — ตั้งค่า Modbus TCP Input เท่านั้น: host/port/unit id + register map
 //
 // การเลือก/ตั้งค่า Output ไม่อยู่ในหน้านี้อีกต่อไป — ย้ายไปที่:
 //   - เปิด/ปิด output ตัวไหน: หน้า Dashboard (ผ่าน /api/mode)
 //   - ตั้งค่ารายละเอียดของแต่ละ output (url/host/topic ฯลฯ): outputSetup.dart
-// เหตุผล: output เป็นอิสระจาก input โดยสิ้นเชิง (เปิดพร้อมกันได้หลายตัว ไม่ผูกกับ input
-// ตัวไหน) การแปะ output card ซ้ำไว้ในทุกหน้า input จะต้องคอยแก้พร้อมกันหลายที่ทุกครั้ง
-// ที่มีการเพิ่ม/แก้ output type ใหม่ — แยกออกมาเป็นหน้าเดียวใช้ร่วมกันดีกว่า
+// โครงเดียวกับ Rs485SetupPage ทุกอย่าง ต่างแค่ "การเชื่อมต่อ" เป็น Host/Port แทน serial pin/baud
 //
 // API paths:
-//   GET/POST /api/input/rs485
-//   GET/POST /api/input/rs485/registers
-//   POST     /api/input/rs485/poll_now  ← ทดสอบอ่านค่า + ส่งออกไปยัง output ที่เปิดไว้ทันที
+//   GET/POST /api/input/tcp
+//   GET/POST /api/input/tcp/registers
+//   POST     /api/input/tcp/poll_now  ← ทดสอบอ่านค่า + ส่งออกไปยัง output ที่เปิดไว้ทันที
 // =====================================================
-class Rs485SetupPage extends StatefulWidget {
-  const Rs485SetupPage({super.key, this.baseUrl = 'http://192.168.4.1'});
+class TcpSetupPage extends StatefulWidget {
+  const TcpSetupPage({super.key, this.baseUrl = 'http://192.168.4.1'});
 
   final String baseUrl;
 
   @override
-  State<Rs485SetupPage> createState() => _Rs485SetupPageState();
+  State<TcpSetupPage> createState() => _TcpSetupPageState();
 }
 
 class _RegisterRow {
@@ -54,20 +52,15 @@ class _RegisterRow {
   }
 }
 
-class _Rs485SetupPageState extends State<Rs485SetupPage> {
-  static const _timeout = Duration(seconds: 5);
+class _TcpSetupPageState extends State<TcpSetupPage> {
+  static const _timeout = Duration(seconds: 15);
   static const _dataTypes = ['uint16', 'int16', 'uint32', 'int32', 'float32'];
 
-  // ── Serial config ─────────────────────────────────
-  final _rxPinController = TextEditingController();
-  final _txPinController = TextEditingController();
-  final _dePinController = TextEditingController();
-  final _rePinController = TextEditingController();
-  final _baudController = TextEditingController();
-  final _slaveIdController = TextEditingController();
+  // ── TCP connection config ─────────────────────────
+  final _hostController = TextEditingController();
+  final _portController = TextEditingController(text: '502');
+  final _unitIdController = TextEditingController(text: '1');
   final _pollIntervalController = TextEditingController();
-  String _parity = 'N';
-  int _stopBits = 1;
   int _functionCode = 3;
   bool _loadingConfig = true;
   bool _savingConfig = false;
@@ -92,12 +85,9 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
 
   @override
   void dispose() {
-    _rxPinController.dispose();
-    _txPinController.dispose();
-    _dePinController.dispose();
-    _rePinController.dispose();
-    _baudController.dispose();
-    _slaveIdController.dispose();
+    _hostController.dispose();
+    _portController.dispose();
+    _unitIdController.dispose();
     _pollIntervalController.dispose();
     for (final r in _registerRows) r.dispose();
     super.dispose();
@@ -114,27 +104,22 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
   // =====================================================
-  // API: /api/input/rs485  (serial config)
+  // API: /api/input/tcp  (host/port/unit id/function code)
   // =====================================================
   Future<void> _loadConfig() async {
     setState(() { _loadingConfig = true; _configError = null; });
     try {
       final res = await http
-          .get(Uri.parse('${widget.baseUrl}/api/input/rs485'))
+          .get(Uri.parse('${widget.baseUrl}/api/input/tcp'))
           .timeout(_timeout);
       if (!mounted) return;
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
-        _rxPinController.text        = '${data['rx_pin']        ?? 16}';
-        _txPinController.text        = '${data['tx_pin']        ?? 17}';
-        _dePinController.text        = '${data['de_pin']        ?? -1}';
-        _rePinController.text        = '${data['re_pin']        ?? -1}';
-        _baudController.text         = '${data['baud']          ?? 9600}';
-        _slaveIdController.text      = '${data['slave_id']      ?? 1}';
-        _pollIntervalController.text = '${data['poll_interval_ms'] ?? 5000}';
+        _hostController.text         = data['host']?.toString() ?? '';
+        _portController.text         = '${data['port']              ?? 502}';
+        _unitIdController.text       = '${data['unit_id']            ?? 1}';
+        _pollIntervalController.text = '${data['poll_interval_ms']   ?? 5000}';
         setState(() {
-          _parity       = (data['parity']?.toString().isNotEmpty ?? false) ? data['parity'].toString() : 'N';
-          _stopBits     = int.tryParse('${data['stop_bits']     ?? 1}') ?? 1;
           _functionCode = int.tryParse('${data['function_code'] ?? 3}') ?? 3;
           _loadingConfig = false;
         });
@@ -151,23 +136,22 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
   }
 
   Future<void> _saveConfig() async {
+    if (_hostController.text.trim().isEmpty) {
+      _showMessage('กรุณากรอก Host ของอุปกรณ์ Modbus TCP');
+      return;
+    }
     setState(() => _savingConfig = true);
     final body = {
-      "rx_pin":          int.tryParse(_rxPinController.text.trim())        ?? 16,
-      "tx_pin":          int.tryParse(_txPinController.text.trim())        ?? 17,
-      "de_pin":          int.tryParse(_dePinController.text.trim())        ?? -1,
-      "re_pin":          int.tryParse(_rePinController.text.trim())        ?? -1,
-      "baud":            int.tryParse(_baudController.text.trim())         ?? 9600,
-      "parity":          _parity,
-      "stop_bits":       _stopBits,
-      "slave_id":        int.tryParse(_slaveIdController.text.trim())      ?? 1,
-      "function_code":   _functionCode,
-      "poll_interval_ms": int.tryParse(_pollIntervalController.text.trim()) ?? 5000,
+      "host":              _hostController.text.trim(),
+      "port":              int.tryParse(_portController.text.trim())         ?? 502,
+      "unit_id":           int.tryParse(_unitIdController.text.trim())       ?? 1,
+      "function_code":     _functionCode,
+      "poll_interval_ms":  int.tryParse(_pollIntervalController.text.trim()) ?? 5000,
     };
     try {
       final res = await http
           .post(
-            Uri.parse('${widget.baseUrl}/api/input/rs485'),
+            Uri.parse('${widget.baseUrl}/api/input/tcp'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(body),
           )
@@ -175,7 +159,7 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
       if (!mounted) return;
       final data = jsonDecode(res.body) as Map<String, dynamic>?;
       _showMessage(res.statusCode == 200 && data?['success'] == true
-          ? 'บันทึกการตั้งค่า RS485 สำเร็จ'
+          ? 'บันทึกการตั้งค่า Modbus TCP สำเร็จ'
           : (data?['message']?.toString() ?? 'บันทึกไม่สำเร็จ'));
     } on TimeoutException {
       if (!mounted) return;
@@ -189,13 +173,13 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
   }
 
   // =====================================================
-  // API: /api/input/rs485/registers
+  // API: /api/input/tcp/registers
   // =====================================================
   Future<void> _loadRegisters() async {
     setState(() { _loadingRegisters = true; _registersError = null; });
     try {
       final res = await http
-          .get(Uri.parse('${widget.baseUrl}/api/input/rs485/registers'))
+          .get(Uri.parse('${widget.baseUrl}/api/input/tcp/registers'))
           .timeout(_timeout);
       if (!mounted) return;
       if (res.statusCode == 200) {
@@ -242,7 +226,7 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
     try {
       final res = await http
           .post(
-            Uri.parse('${widget.baseUrl}/api/input/rs485/registers'),
+            Uri.parse('${widget.baseUrl}/api/input/tcp/registers'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(body),
           )
@@ -267,13 +251,13 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
   void _removeRegisterRow(int index) => setState(() => _registerRows.removeAt(index).dispose());
 
   // =====================================================
-  // API: POST /api/input/rs485/poll_now
+  // API: POST /api/input/tcp/poll_now
   // =====================================================
   Future<void> _testPollNow() async {
     setState(() { _testing = true; _testResult = null; });
     try {
       final res = await http
-          .post(Uri.parse('${widget.baseUrl}/api/input/rs485/poll_now'))
+          .post(Uri.parse('${widget.baseUrl}/api/input/tcp/poll_now'))
           .timeout(const Duration(seconds: 15));
       if (!mounted) return;
       if (res.statusCode == 200) {
@@ -311,7 +295,7 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("ตั้งค่า RS485 / Modbus"),
+        title: const Text("ตั้งค่า Modbus TCP"),
         actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _loadAll)],
       ),
       body: RefreshIndicator(
@@ -319,7 +303,7 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            _buildSerialConfigCard(),
+            _buildConnectionCard(),
             const SizedBox(height: 16),
             _buildRegistersCard(),
             const SizedBox(height: 16),
@@ -334,14 +318,19 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
   // Card widgets
   // =====================================================
 
-  Widget _buildSerialConfigCard() {
+  Widget _buildConnectionCard() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("การเชื่อมต่อ RS485", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const Text("การเชื่อมต่อ Modbus TCP", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 4),
+            const Text(
+              "เชื่อมต่อไปยังอุปกรณ์ Modbus TCP ผ่านเครือข่าย LAN เดียวกัน (เช่น PLC / gateway ที่รองรับ Modbus TCP)",
+              style: TextStyle(color: Colors.grey, fontSize: 12),
+            ),
             const SizedBox(height: 12),
             if (_loadingConfig)
               const Center(child: CircularProgressIndicator())
@@ -351,51 +340,20 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
                 const SizedBox(height: 8),
               ],
               Row(children: [
-                Expanded(child: TextField(controller: _rxPinController, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "RX Pin", border: OutlineInputBorder()))),
+                Expanded(flex: 3, child: TextField(controller: _hostController,
+                    decoration: const InputDecoration(labelText: "Host / IP อุปกรณ์", hintText: "192.168.1.100", border: OutlineInputBorder()))),
                 const SizedBox(width: 8),
-                Expanded(child: TextField(controller: _txPinController, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "TX Pin", border: OutlineInputBorder()))),
+                Expanded(child: TextField(controller: _portController, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: "Port", hintText: "502", border: OutlineInputBorder()))),
               ]),
               const SizedBox(height: 12),
               Row(children: [
-                Expanded(child: TextField(controller: _dePinController, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "DE Pin", helperText: "-1 ถ้าไม่ใช้", border: OutlineInputBorder()))),
-                const SizedBox(width: 8),
-                Expanded(child: TextField(controller: _rePinController, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "RE Pin", helperText: "ถ้าแยกขา RE ให้กรอกที่นี่", border: OutlineInputBorder()))),
-              ]),
-              const SizedBox(height: 12),
-              TextField(controller: _baudController, keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "Baud Rate", border: OutlineInputBorder())),
-              const SizedBox(height: 12),
-              Row(children: [
-                Expanded(child: DropdownButtonFormField<String>(
-                  initialValue: _parity,
-                  decoration: const InputDecoration(labelText: "Parity", border: OutlineInputBorder()),
-                  items: const [
-                    DropdownMenuItem(value: 'N', child: Text("None (N)")),
-                    DropdownMenuItem(value: 'E', child: Text("Even (E)")),
-                    DropdownMenuItem(value: 'O', child: Text("Odd (O)")),
-                  ],
-                  onChanged: (v) => setState(() => _parity = v ?? 'N'),
-                )),
-                const SizedBox(width: 8),
-                Expanded(child: DropdownButtonFormField<int>(
-                  initialValue: _stopBits,
-                  decoration: const InputDecoration(labelText: "Stop Bits", border: OutlineInputBorder()),
-                  items: const [DropdownMenuItem(value: 1, child: Text("1")), DropdownMenuItem(value: 2, child: Text("2"))],
-                  onChanged: (v) => setState(() => _stopBits = v ?? 1),
-                )),
-              ]),
-              const SizedBox(height: 12),
-              Row(children: [
-                Expanded(child: TextField(controller: _slaveIdController, keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "Slave ID", border: OutlineInputBorder()))),
+                Expanded(child: TextField(controller: _unitIdController, keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: "Unit ID (Slave ID)", border: OutlineInputBorder()))),
                 const SizedBox(width: 8),
                 Expanded(child: DropdownButtonFormField<int>(
                   initialValue: _functionCode,
-                  isExpanded: true,
+                  isExpanded:  true,
                   decoration: const InputDecoration(labelText: "Function Code", border: OutlineInputBorder()),
                   items: const [
                     DropdownMenuItem(value: 3, child: Text("FC3 (Holding)")),
@@ -523,7 +481,7 @@ class _Rs485SetupPageState extends State<Rs485SetupPage> {
             const Text("ทดสอบ", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             const SizedBox(height: 8),
             const Text(
-              "สั่งให้ ESP32 อ่านค่าจาก Modbus ตาม register ที่ตั้งไว้ทันที แล้วส่งออกไปยัง Output "
+              "สั่งให้ ESP32 อ่านค่าจาก Modbus TCP ตาม register ที่ตั้งไว้ทันที แล้วส่งออกไปยัง Output "
               "ทุกตัวที่เปิดใช้งานไว้ (ตั้งค่าที่หน้า Dashboard/Config Output) โดยไม่ต้องรอ interval",
               style: TextStyle(color: Colors.grey),
             ),

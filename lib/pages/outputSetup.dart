@@ -84,6 +84,7 @@ class _OutputSetupPageState extends State<OutputSetupPage> {
   final _mqttUsernameController = TextEditingController();
   final _mqttPasswordController = TextEditingController();
   final _mqttTopicController = TextEditingController();
+  final _mqttCommandTopicController = TextEditingController();
   bool _mqttRetain = false;
   bool _loadingMqttOutput = true;
   bool _savingMqttOutput = false;
@@ -141,6 +142,7 @@ class _OutputSetupPageState extends State<OutputSetupPage> {
     _mqttUsernameController.dispose();
     _mqttPasswordController.dispose();
     _mqttTopicController.dispose();
+    _mqttCommandTopicController.dispose();
     _rs485OutRxPinController.dispose();
     _rs485OutTxPinController.dispose();
     _rs485OutDePinController.dispose();
@@ -289,6 +291,7 @@ class _OutputSetupPageState extends State<OutputSetupPage> {
         _mqttClientIdController.text = data['client_id']?.toString() ?? '';
         _mqttUsernameController.text = data['username']?.toString()  ?? '';
         _mqttTopicController.text    = data['topic']?.toString()     ?? '';
+        _mqttCommandTopicController.text = data['command_topic']?.toString() ?? '';
         setState(() {
           _mqttRetain    = data['retain']   == true;
           _loadingMqttOutput = false;
@@ -317,6 +320,7 @@ class _OutputSetupPageState extends State<OutputSetupPage> {
       "client_id": _mqttClientIdController.text.trim(),
       "username":  _mqttUsernameController.text.trim(),
       "topic":     _mqttTopicController.text.trim(),
+      "command_topic": _mqttCommandTopicController.text.trim(),
       "retain":    _mqttRetain,
       if (_mqttPasswordController.text.isNotEmpty) "password": _mqttPasswordController.text,
     };
@@ -635,13 +639,30 @@ class _OutputSetupPageState extends State<OutputSetupPage> {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
         setState(() {
           _appResultHasData = data['has_data'] == true;
-          _appResultFields = (data['data'] as Map<String, dynamic>?) ?? {};
+          _appResultFields = _parseAppResultData(data['data']);
           _appResultAgeMs = data['age_ms'] is int ? data['age_ms'] as int : null;
         });
       }
     } catch (_) {
       // เงียบไว้ ไม่ต้องโชว์ error ทุก 3 วิถ้าเน็ตสะดุดชั่วคราว
     }
+  }
+
+  // firmware ส่ง data มาเป็น array [{"deviceName","valueData"}] (Payload.toJson() แบบใหม่)
+  // แปลงกลับเป็น Map<label, value> ให้ _buildAppResultCard() ใช้ได้เหมือนเดิม
+  // รองรับ firmware format เก่า ({"label": value}) ไว้ด้วยเผื่อยังไม่ได้อัปเดตเฟิร์มแวร์
+  Map<String, dynamic> _parseAppResultData(dynamic raw) {
+    final Map<String, dynamic> out = {};
+    if (raw is List) {
+      for (final item in raw) {
+        if (item is Map && item['deviceName'] != null) {
+          out[item['deviceName'].toString()] = item['valueData'];
+        }
+      }
+    } else if (raw is Map<String, dynamic>) {
+      out.addAll(raw);
+    }
+    return out;
   }
 
   // =====================================================
@@ -889,6 +910,13 @@ class _OutputSetupPageState extends State<OutputSetupPage> {
               const SizedBox(height: 12),
               TextField(controller: _mqttTopicController,
                   decoration: const InputDecoration(labelText: "Topic", hintText: "sensors/farm-box-1", border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              TextField(controller: _mqttCommandTopicController,
+                  decoration: const InputDecoration(
+                    labelText: "Command Topic (ถ้ามี)",
+                    hintText: "sensors/farm-box-1/cmd",
+                    helperText: 'รอรับคำสั่ง JSON [{"deviceName":"d1","cmd":"10"}] แล้วเขียนค่าลง register ที่ label ตรงกัน',
+                    border: OutlineInputBorder())),
               CheckboxListTile(contentPadding: EdgeInsets.zero,
                 title: const Text("Retain message"),
                 value: _mqttRetain, onChanged: (v) => setState(() => _mqttRetain = v ?? false)),

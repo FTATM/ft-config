@@ -42,7 +42,7 @@ class _WifiSetupPageState extends State<WifiSetupPage> {
 
   // แทนที่จะรอ response เดียวค้างนาน ๆ ซึ่งจะโดน connection abort ระหว่างที่วิทยุยุ่งอยู่กับสแกน
   static const _pollInterval = Duration(seconds: 1);
-  static const _maxPolls = 15; // ~15 วิ สูงสุด กันเผื่อ ESP32 ค้าง
+  static const _maxPolls = 30; // ~15 วิ สูงสุด กันเผื่อ ESP32 ค้าง
 
   Future<void> _loadNetworks() async {
     setState(() {

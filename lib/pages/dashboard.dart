@@ -333,6 +333,13 @@ class _dashboardPageState extends State<dashboardPage> {
               // ── ปุ่มตามสถานะ WiFi mode ──────────────────────
               if (_infoData?['mode'] == "AP") ...[
                 _buildWifiConnectionButton(),
+                ListTile(
+                  leading: const Icon(Icons.restart_alt, color: Colors.orange),
+                  title: const Text("Restart อุปกรณ์"),
+                  subtitle: const Text("รีสตาร์ทใหม่ ไม่ล้างค่าที่ตั้งไว้"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: _restartDevice,
+                ),
               ] else ...[
                 // ปุ่ม config — แสดงเฉพาะ STA mode (เชื่อม router แล้ว)
                 if (showConfigButton) ...[
@@ -376,8 +383,11 @@ class _dashboardPageState extends State<dashboardPage> {
                     const SizedBox(height: 8),
                   ],
                 ],
-                _buildLogoutButton(),
+                _buildMaintenanceCard(),
+                const SizedBox(height: 16),
+                // _buildLogoutButton(),
               ],
+              _buildLogoutButton(),
             ],
           ),
         ),
@@ -569,6 +579,128 @@ class _dashboardPageState extends State<dashboardPage> {
     return Card(
       child: ListTile(leading: Icon(icon), title: Text(label), trailing: const Icon(Icons.chevron_right), onTap: onTap),
     );
+  }
+
+  // =====================================================
+  // Maintenance — Restart / Reset อุปกรณ์
+  //   Restart  → POST /api/restart    รีบูตเฉย ๆ การตั้งค่าทั้งหมดยังอยู่
+  //   Reset    → POST /api/reset_wifi ล้างค่า WiFi แล้วรีบูตกลับเข้าโหมด AP
+  //              (การตั้งค่า Input/Output อื่น ๆ ไม่ถูกล้าง)
+  // =====================================================
+  Widget _buildMaintenanceCard() {
+    return Card(
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.restart_alt, color: Colors.orange),
+            title: const Text("Restart อุปกรณ์"),
+            subtitle: const Text("รีสตาร์ทใหม่ ไม่ล้างค่าที่ตั้งไว้"),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _restartDevice,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.settings_backup_restore, color: Colors.red),
+            title: const Text("Reset อุปกรณ์"),
+            subtitle: const Text("ล้างค่า WiFi แล้วกลับเข้าโหมด AP"),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _resetDevice,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool?> _confirmDialog({
+    required String title,
+    required String message,
+    required String confirmLabel,
+    required Color confirmColor,
+  }) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("ยกเลิก")),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: confirmColor),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _restartDevice() async {
+    final confirmed = await _confirmDialog(
+      title: "Restart อุปกรณ์",
+      message:
+          "อุปกรณ์จะรีสตาร์ททันที การตั้งค่าทั้งหมดยังอยู่ครบ\n"
+          "จะเสียการเชื่อมต่อชั่วคราวประมาณ 10-20 วินาที",
+      confirmLabel: "Restart",
+      confirmColor: Colors.orange,
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      final res = await http.post(Uri.parse('$_baseUrl/api/restart')).timeout(_timeout);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            res.statusCode == 200
+                ? "สั่ง Restart แล้ว — รอสักครู่แล้วลากลงเพื่อโหลดใหม่"
+                : "สั่ง Restart ไม่สำเร็จ (${res.statusCode})",
+          ),
+        ),
+      );
+    } on TimeoutException {
+      // ESP32 อาจรีบูตก่อนตอบกลับ ถือว่าปกติ
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("สั่ง Restart แล้ว — อุปกรณ์กำลังรีบูต")));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('เกิดข้อผิดพลาด: $e')));
+    }
+  }
+
+  Future<void> _resetDevice() async {
+    final confirmed = await _confirmDialog(
+      title: "Reset อุปกรณ์ (ล้างค่า WiFi)",
+      message:
+          "จะล้างค่า WiFi ที่บันทึกไว้แล้วรีสตาร์ท อุปกรณ์จะกลับเข้าโหมด AP "
+          "ให้ตั้งค่าใหม่ผ่าน \"ESP32_Config\"\n\n"
+          "การตั้งค่า Input/Output อื่น ๆ ยังอยู่",
+      confirmLabel: "Reset",
+      confirmColor: Colors.red,
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      final res = await http.post(Uri.parse('$_baseUrl/api/reset_wifi')).timeout(_timeout);
+      if (!mounted) return;
+      final data = jsonDecode(res.body) as Map<String, dynamic>?;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            res.statusCode == 200 && data?['success'] == true
+                ? "Reset แล้ว — อุปกรณ์กำลังรีบูตเข้าโหมด AP"
+                : "Reset ไม่สำเร็จ (${res.statusCode})",
+          ),
+        ),
+      );
+    } on TimeoutException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Reset แล้ว — อุปกรณ์กำลังรีบูตเข้าโหมด AP")));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('เกิดข้อผิดพลาด: $e')));
+    }
   }
 
   Widget _buildLogoutButton() {
